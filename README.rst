@@ -29,13 +29,13 @@ Usage
 
 Create a CSV with your tasks in the format:
 
-===================  ======== ========== =========================
-Task                 Duration Resources  Dependency
-===================  ======== ========== =========================
-Name of task 1       6        Person 1
-Some other task      3        Person 1
-Some other task 3    12       Person 2   Name of task 1
-===================  ======== ========== =========================
+==== ===================  ======== ============ ========== =========================
+Id   Task                 Duration Start        Resources  Dependency
+==== ===================  ======== ============ ========== =========================
+1    Name of task 1       6        2022/11/30   Joe
+2    Some other task      3        2022/11/30   Marc       1
+3    Some other task 3    12       2022/11/30   Alice      2
+==== ===================  ======== ============ ========== =========================
 
 Where duration is given in days. Multiple resources can be separated by a "/". (I.E, "Person1/Person2").
 
