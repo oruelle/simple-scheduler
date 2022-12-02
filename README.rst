@@ -41,15 +41,15 @@ Where duration is given in days. Multiple resources can be separated by a "/". (
 
 An `example csv`_ can found found in the repository. It builds into:
 
-.. image:: https://raw.githubusercontent.com/traherom/simple-scheduler/master/example/example.png
+.. image:: ./example/example.png
         :alt: Example output
         :width: 100%
         :align: center
 
 (We are displaying the PNG here so that GitHub displays it. The SVG_ is what was actually produced.)
 
-.. _SVG: https://raw.githubusercontent.com/traherom/simple-scheduler/master/example/example.svg
-.. _example csv: https://raw.githubusercontent.com/traherom/simple-scheduler/master/example/example.csv
+.. _SVG: ./example/example.svg
+.. _example csv: ./example/example.csv
 
 .. code:: shell
 
