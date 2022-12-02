@@ -3,6 +3,7 @@ Core of simple-scheduler
 """
 import re
 import random
+import csv
 from datetime import date, timedelta, datetime
 import logging
 from collections import defaultdict
@@ -20,20 +21,58 @@ FONT_ATTR = {
     'stroke_width': 0,
     'font_family': 'Verdana',
     'font_size': 15
-    }
+}
 
 ONE_DAY = timedelta(days=1)
-WEEKEND_DAYS = [5, 6]
+WEEKEND_DAYS = [5, 6]  # samedi et dimanche
+
 
 def random_color():
     """
     http://stackoverflow.com/questions/13998901/generating-a-random-hex-color-in-python
     """
-    r = lambda: random.randint(0,255)
-    return '#%02X%02X%02X' % (r(),r(),r())
+    def r(): return random.randint(0, 255)
+    return '#%02X%02X%02X' % (r(), r(), r())
+
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+class Calendar:
+    """
+    Builds extremely SIMPLE gantt charts.
+
+    This is designed to be a basic utility to help estimate schedules and provide a projected
+    timeline for a project. As such, not all features like exact start and end dates are supported;
+    instead, tasks ask for duration and follow these rules:
+        - A resource (person) can never be doing two things at once
+        - All dependencies must be complete before a task can begin
+        - All tasks are measurable in days
+        - Tasks are ordered on the chart top-to-bottom in the order they were added to projects
+
+    Currently, vacations/unavailability for resources is not supported and only a single project
+    may be added to a chart.
+    """
+
+    def __init__(self):
+        self.start_date = date.today()
+
+        self.work_weekends = False
+        self.color = '#FF3030'
+
+    @property
+    def skipped_days(self):
+        """
+        Returns days that are NEVER worked (weekends).
+
+        Can be disabled via chart.work_weekends = True
+        """
+        if self.work_weekends:
+            return []
+        else:
+            return WEEKEND_DAYS
+
 
 class Chart:
     """
@@ -50,13 +89,14 @@ class Chart:
     Currently, vacations/unavailability for resources is not supported and only a single project
     may be added to a chart.
     """
+
     def __init__(self, name):
         self.name = name
         self.projects = []
-        self.resources = []
+        self.resources = {}
         self.start_date = date.today()
 
-        self.work_weekends = False
+        self.calendar = Calendar()
         self.color = '#FF3030'
 
     def add_project(self, project):
@@ -65,30 +105,22 @@ class Chart:
         """
         if project not in self.projects:
             if len(self.projects) >= 1:
-                raise ValueError('Simple Gantt can only handle a single project at a time currently')
+                raise ValueError(
+                    'Simple Gantt can only handle a single project at a time currently')
 
             self.projects.append(project)
-            project.set_chart(self)
+            for res in project.resources.values():
+                self.add_resource(res)
 
     def add_resource(self, resource):
         """
         Adds the given resource to the gantt chart
         """
-        if resource not in self.resources:
-            self.resources.append(resource)
-            resource.set_chart(self)
-
-    @property
-    def skipped_days(self):
-        """
-        Returns days that are NEVER worked (weekends).
-
-        Can be disabled via chart.work_weekends = True
-        """
-        if self.work_weekends:
-            return []
-        else:
-            return WEEKEND_DAYS
+        if not isinstance(resource, Resource):
+            raise TypeError(
+                f"resource argument is not of type Resource, type given {type(resource)}")
+        if resource.name not in self.resources:
+            self.resources[resource.name] = resource
 
     @property
     def end_date(self):
@@ -140,7 +172,8 @@ class Chart:
             end_date = end
 
         if start_date > end_date:
-            raise ValueError('Unable to draw chart, start date {0} > end_date {1}'.format(start_date, end_date))
+            raise ValueError('Unable to draw chart, start date {0} > end_date {1}'.format(
+                start_date, end_date))
 
         # Draw calendar at top
         # How many days do we need to draw?
@@ -160,13 +193,14 @@ class Chart:
 
         # White background and calendar
         dwg.add(svgwrite.shapes.Rect(
-                    insert=((0)*cm, 0*cm),
-                    size=((maxx+1)*cm, (projects_height+3)*cm),
-                    fill='white',
-                    stroke_width=0,
-                    opacity=1
-                    ))
-        dwg.add(self._svg_calendar(maxx, projects_height, start_date, datetime.today()))
+            insert=((0)*cm, 0*cm),
+            size=((maxx+1)*cm, (projects_height+3)*cm),
+            fill='white',
+            stroke_width=0,
+            opacity=1
+        ))
+        dwg.add(self._svg_calendar(
+            maxx, projects_height, start_date, datetime.today()))
 
         # Draw each project
         for proj in projects_svg:
@@ -204,13 +238,15 @@ class Chart:
         """
         dwg = svgwrite.container.Group()
 
-        cal = {0:'Mo', 1:'Tu', 2:'We', 3:'Th', 4:'Fr', 5:'Sa', 6:'Su'}
+        cal = {0: 'Mo', 1: 'Tu', 2: 'We', 3: 'Th', 4: 'Fr', 5: 'Sa', 6: 'Su'}
 
         maxx += 1
 
-        vlines = dwg.add(svgwrite.container.Group(id='vlines', stroke='lightgray'))
+        vlines = dwg.add(svgwrite.container.Group(
+            id='vlines', stroke='lightgray'))
         for x in range(maxx):
-            vlines.add(svgwrite.shapes.Line(start=((x)*cm, 2*cm), end=((x)*cm, (maxy+2)*cm)))
+            vlines.add(svgwrite.shapes.Line(
+                start=((x)*cm, 2*cm), end=((x)*cm, (maxy+2)*cm)))
             jour = start_date + timedelta(days=x)
 
             if not today is None and today == jour:
@@ -221,10 +257,10 @@ class Chart:
                     stroke='lightgray',
                     stroke_width=0,
                     opacity=0.8
-                    ))
+                ))
 
             # draw vacations
-            if (start_date + timedelta(days=x)).weekday() in self.skipped_days:
+            if (start_date + timedelta(days=x)).weekday() in self.calendar.skipped_days:
                 vlines.add(svgwrite.shapes.Rect(
                     insert=((x)*cm, 2*cm),
                     size=(1*cm, maxy*cm),
@@ -232,45 +268,50 @@ class Chart:
                     stroke='lightgray',
                     stroke_width=1,
                     opacity=0.7,
-                    ))
+                ))
 
             # Current day
-            vlines.add(svgwrite.text.Text('{1} {0:02}'.format(jour.day, cal[jour.weekday()][0]),
-                                            insert=((x*10+1)*mm, 19*mm),
-                                            fill='black', stroke='black', stroke_width=0,
-                                            font_family=FONT_ATTR['font_family'], font_size=15-3))
+            vlines.add(svgwrite.text.Text('{0:02}'.format(jour.day, cal[jour.weekday()][0]),  # '{1} {0:02}'
+                                          insert=((x*10+1)*mm, 19*mm),
+                                          fill='black', stroke='black', stroke_width=0,
+                                          font_family=FONT_ATTR['font_family'], font_size=15-3))
             # Year
             if jour.day == 1 and jour.month == 1:
                 vlines.add(svgwrite.text.Text('{0}'.format(jour.year),
-                                                insert=((x*10+1)*mm, 5*mm),
-                                                fill='#400000', stroke='#400000', stroke_width=0,
-                                                font_family=FONT_ATTR['font_family'], font_size=15+5,
-                                                font_weight="bold"))
+                                              insert=((x*10+1)*mm, 5*mm),
+                                              fill='#400000', stroke='#400000', stroke_width=0,
+                                              font_family=FONT_ATTR['font_family'], font_size=15+5,
+                                              font_weight="bold"))
             # Month name
             if jour.day == 1:
                 vlines.add(svgwrite.text.Text('{0}'.format(jour.strftime("%B")),
-                                                insert=((x*10+1)*mm, 10*mm),
-                                                fill='#800000', stroke='#800000', stroke_width=0,
-                                                font_family=FONT_ATTR['font_family'], font_size=15+3,
-                                                font_weight="bold"))
+                                              insert=((x*10+1)*mm, 10*mm),
+                                              fill='#800000', stroke='#800000', stroke_width=0,
+                                              font_family=FONT_ATTR['font_family'], font_size=15+3,
+                                              font_weight="bold"))
             # Week number
             if jour.weekday() == 0:
                 vlines.add(svgwrite.text.Text('{0:02}'.format(jour.isocalendar()[1]),
-                                                insert=((x*10+1)*mm, 15*mm),
-                                                fill='black', stroke='black', stroke_width=0,
-                                                font_family=FONT_ATTR['font_family'],
-                                                font_size=15+1,
-                                                font_weight="bold"))
+                                              insert=((x*10+1)*mm, 15*mm),
+                                              fill='black', stroke='black', stroke_width=0,
+                                              font_family=FONT_ATTR['font_family'],
+                                              font_size=15+1,
+                                              font_weight="bold"))
 
-        vlines.add(svgwrite.shapes.Line(start=((maxx)*cm, 2*cm), end=((maxx)*cm, (maxy+2)*cm)))
+        vlines.add(svgwrite.shapes.Line(
+            start=((maxx)*cm, 2*cm), end=((maxx)*cm, (maxy+2)*cm)))
 
-        hlines = dwg.add(svgwrite.container.Group(id='hlines', stroke='lightgray'))
+        hlines = dwg.add(svgwrite.container.Group(
+            id='hlines', stroke='lightgray'))
 
-        dwg.add(svgwrite.shapes.Line(start=((0)*cm, (2)*cm), end=((maxx)*cm, (2)*cm), stroke='black'))
-        dwg.add(svgwrite.shapes.Line(start=((0)*cm, (maxy+2)*cm), end=((maxx)*cm, (maxy+2)*cm), stroke='black'))
+        dwg.add(svgwrite.shapes.Line(start=((0)*cm, (2)*cm),
+                end=((maxx)*cm, (2)*cm), stroke='black'))
+        dwg.add(svgwrite.shapes.Line(start=((0)*cm, (maxy+2)*cm),
+                end=((maxx)*cm, (maxy+2)*cm), stroke='black'))
 
         for y in range(2, maxy+3):
-            hlines.add(svgwrite.shapes.Line(start=((0)*cm, y*cm), end=((maxx)*cm, y*cm)))
+            hlines.add(svgwrite.shapes.Line(
+                start=((0)*cm, y*cm), end=((maxx)*cm, y*cm)))
 
         return dwg
 
@@ -278,7 +319,8 @@ class Chart:
         """
         Display info on all projects under us
         """
-        s = 'Chart {} starts {}, {} resources\nProjects:'.format(self.name, self.start_date, len(self.resources))
+        s = 'Chart {} starts {}, {} resources\nProjects:'.format(
+            self.name, self.start_date, len(self.resources))
         for p in self.projects:
             s += '\n' + str(p)
         return s
@@ -288,21 +330,54 @@ class Project:
     """
     Collects tasks
     """
-    def __init__(self, name, chart=None):
+
+    def __init__(self, name):
         self.name = name
         self.tasks = []
 
-        self.chart = None
-        self.set_chart(chart)
+        self.resources = {}
+        self._get_data_from_file()
 
-    def set_chart(self, chart):
-        """
-        Assigns task to given chart. Ensures chart has us included in their list.
-        """
-        old_chart = self.chart
-        self.chart = chart
-        if old_chart != chart and self.chart is not None:
-            self.chart.add_project(self)
+    def _get_data_from_file(self):
+        tasks = {}
+        with open(self.name) as csvfile:
+            data = csv.DictReader(csvfile)
+
+            for row in data:
+                id = row['Id'].strip()
+                # Control is task id already exists
+                if id in tasks:
+                    raise ValueError("Task Id is already used.")
+                else:
+                    pass
+
+                # Add new resources as encountered
+                task_resources = []
+                for _res in row['Resource'].split('/'):
+                    res = _res.strip()
+                    if res not in self.resources:
+                        self.resources[res] = Resource(res)
+
+                    if res not in task_resources:
+                        task_resources.append(self.resources[res])
+
+                dependencies = []
+                for _dep in row['Dependency'].split('/'):
+                    dep = _dep.strip()
+                    if dep == '':
+                        continue
+                    dependencies.append(tasks[dep])
+
+                _task = Task(
+                    id=id,
+                    name=row['Task'].strip(),
+                    duration=row['Duration'].strip(),
+                    resources=task_resources,
+                    dependencies=dependencies,
+                    project=self,
+                )
+                tasks[id] = _task
+                self.add_task(_task)
 
     def add_task(self, task):
         """
@@ -311,6 +386,16 @@ class Project:
         if task not in self.tasks:
             self.tasks.append(task)
             task.set_project(self)
+
+    def add_resource(self, resource):
+        """
+        Adds the given resource to the project
+        """
+        if not isinstance(resource, Resource):
+            raise TypeError(
+                f"resource argument is not of type Resource, type given {type(resource)}")
+        if resource.name not in self.resources:
+            self.resources[resource.name].append(resource)
 
     @property
     def start_date(self):
@@ -361,7 +446,8 @@ class Project:
 
         # Draw tasks
         for t in self.tasks:
-            trepr, theight = t.svg(cy, start=start, end=end, color=color, level=level+1, offset=offset)
+            trepr, theight = t.svg(
+                cy, start=start, end=end, color=color, level=level+1, offset=offset)
             if trepr is not None:
                 prj.add(trepr)
                 cy += theight
@@ -372,17 +458,18 @@ class Project:
             # if ((self.start_date() >= start and self.end_date() <= end)
             #     or (self.start_date() >= start and (self.end_date() <= end or self.start_date() <= end))) or level == 1:
             if ((self.start_date >= start and self.end_date <= end)
-                or ((self.end_date >=start and self.start_date <= end))) or level == 1:
-                fprj.add(svgwrite.text.Text('{0}'.format(self.name), insert=((6*level+3+offset)*mm, ((prev_y)*10+7)*mm), fill=FONT_ATTR['fill'], stroke=FONT_ATTR['stroke'], stroke_width=FONT_ATTR['stroke_width'], font_family=FONT_ATTR['font_family'], font_size=15+3))
+                    or ((self.end_date >= start and self.start_date <= end))) or level == 1:
+                fprj.add(svgwrite.text.Text('{0}'.format(self.name), insert=((6*level+3+offset)*mm, ((prev_y)*10+7)*mm),
+                         fill=FONT_ATTR['fill'], stroke=FONT_ATTR['stroke'], stroke_width=FONT_ATTR['stroke_width'], font_family=FONT_ATTR['font_family'], font_size=15+3))
 
                 fprj.add(svgwrite.shapes.Rect(
-                        insert=((6*level+0.8+offset)*mm, (prev_y+0.5)*cm),
-                        size=(0.2*cm, ((cy-prev_y-1)+0.4)*cm),
-                        fill='purple',
-                        stroke='lightgray',
-                        stroke_width=0,
-                        opacity=0.5
-                        ))
+                    insert=((6*level+0.8+offset)*mm, (prev_y+0.5)*cm),
+                    size=(0.2*cm, ((cy-prev_y-1)+0.4)*cm),
+                    fill='purple',
+                    stroke='lightgray',
+                    stroke_width=0,
+                    opacity=0.5
+                ))
                 prj_bar = True
             else:
                 cy -= 1
@@ -409,27 +496,35 @@ class Resource:
     """
     Resource for the gantt chart. I.E., a person.
     """
-    def __init__(self, name, chart=None):
+
+    def __init__(self, name):
         """
         Configure required resource attributes
         """
         self.name = name
         self.tasks = []
-
-        self.chart = None
-        self.set_chart(chart)
+        self.hoursInDay = [8, 8, 8, 8, 8, 0, 0]
 
         # Drawing info
-        self.color = random_color()
+        self.color = self.set_color()
 
-    def set_chart(self, chart):
-        """
-        Assigns task to given chart. Ensures chart has us included in their list.
-        """
-        old_chart = self.chart
-        self.chart = chart
-        if old_chart != chart and self.chart is not None:
-            self.chart.add_resource(self)
+    def set_color(self):
+        v = 0
+        _val = [ord(self.name[0]) for x in range(0, 3)]
+        n = 0
+        for x in self.name:
+            _val[n] = (_val[n] + ord(x)) % 256
+            n = (n+1) % 3
+        while (_val[0]+_val[1]+_val[2] < 3*128):
+            for x in range(0, 3):
+                if _val[x] < 128:
+                    _val[x] += 64
+                    break
+        r = _val[0]
+        g = _val[1]
+        b = _val[2]
+        print(self.name, r, g, b, r+g+b)
+        return f"#{r:02X}{g:02X}{b:02X}"
 
     def add_task(self, task):
         """
@@ -462,31 +557,34 @@ class Task:
     """
     Task in project
     """
-    def __init__(self, name, duration, resources=[], dependencies=[], project=None):
+
+    def __init__(self, id: int, name: str, duration: float, resources: list = [], dependencies: list = [], project: Project = None):
         """
         Sets the basic attributes of a task
         """
+        self.id = int(id)
         self.name = name
-        self.duration = duration
-        self.dependencies = dependencies
+        self.duration = float(duration)
+        self.dependencies = dependencies  # with task id
         self.percent_done = 0
 
         self.resources = []
         for r in resources:
             self.add_resource(r)
 
+        self._start_date = None
         self.project = None
         self.set_project(project)
-
-        self._start_date = None
 
     def set_project(self, project):
         """
         Assigns task to given project. Ensures project has us included in their list.
         """
-        old_proj = self.project
-        self.project = project
-        if old_proj != project and self.project is not None:
+        if not isinstance(project, Project):
+            raise TypeError(
+                f"project argument is not of type Project, given type {type(project)}")
+        if self.project != project:
+            self.project = project
             self.project.add_task(self)
 
     def add_resource(self, resource):
@@ -508,10 +606,10 @@ class Task:
         """
         self.clear_schedule()
 
-        chart = self.project.chart
+        #chart = self.project.chart
 
         # Dependencies
-        start_date = chart.start_date
+        start_date = date.today()
         for task in self.dependencies:
             # Must already be scheduled. While they would automatically schedule when we ask them to,
             # we enforce this to require tasks to be added in date order
@@ -520,7 +618,7 @@ class Task:
                     task.name,
                     self.name,
                     self.name)
-                    )
+                )
 
             if task.end_date > start_date:
                 start_date = task.end_date + ONE_DAY
@@ -575,7 +673,7 @@ class Task:
         while work_done + 1 < self.duration:
             end_date += ONE_DAY
 
-            if end_date.weekday() not in self.project.chart.skipped_days:
+            if end_date.weekday() not in Calendar().skipped_days:
                 work_done += 1
 
         return end_date
@@ -610,6 +708,7 @@ class Task:
 
         def _time_diff(e, s):
             return (e - s).days
+
         def _time_diff_d(e, s):
             return _time_diff(e, s) + 1
 
@@ -633,7 +732,7 @@ class Task:
             self.drawn_x_end_coord = x+d
             add_begin_mark = True
         # cas 3 -s--S==e==E-
-        elif self.start_date >= start and  self.end_date > end:
+        elif self.start_date >= start and self.end_date > end:
             x = _time_diff(self.start_date, start) * 10
             d = _time_diff_d(end, self.start_date) * 10
             self.drawn_x_begin_coord = x
@@ -650,10 +749,10 @@ class Task:
         else:
             return (None, 0)
 
-
         self.drawn_y_coord = y
 
         svg = svgwrite.container.Group(id=re.sub(r"[ ,'\/()]", '_', self.name))
+        svg.set_desc(title=self.desc)
         svg.add(svgwrite.shapes.Rect(
                 insert=((x+1+offset)*mm, (y+1)*mm),
                 size=((d-2)*mm, 8*mm),
@@ -691,7 +790,6 @@ class Task:
                     opacity=0.35,
                     ))
 
-
         if add_begin_mark:
             svg.add(svgwrite.shapes.Rect(
                     insert=((x+1)*mm, (y+1)*mm),
@@ -720,16 +818,18 @@ class Task:
                     stroke=color,
                     stroke_width=1,
                     opacity=0.35,
-                ))
+                    ))
 
         # Title alignment
         tx = x+2
 
-        svg.add(svgwrite.text.Text(self.name, insert=((tx)*mm, (y + 5)*mm), fill=FONT_ATTR['fill'], stroke=FONT_ATTR['stroke'], stroke_width=FONT_ATTR['stroke_width'], font_family=FONT_ATTR['font_family'], font_size=15))
+        svg.add(svgwrite.text.Text(f"#{self.id} {self.name}", insert=(
+            (tx)*mm, (y + 5)*mm), fill=FONT_ATTR['fill'], stroke=FONT_ATTR['stroke'], stroke_width=FONT_ATTR['stroke_width'], font_family=FONT_ATTR['font_family'], font_size=15))
 
         if self.resources is not None:
             t = " / ".join(["{0}".format(r.name) for r in self.resources])
-            svg.add(svgwrite.text.Text("{0}".format(t), insert=(tx*mm, (y + 8.5)*mm), fill='purple', stroke=FONT_ATTR['stroke'], stroke_width=FONT_ATTR['stroke_width'], font_family=FONT_ATTR['font_family'], font_size=15-5))
+            svg.add(svgwrite.text.Text("{0}".format(t), insert=(tx*mm, (y + 8.5)*mm), fill='purple',
+                    stroke=FONT_ATTR['stroke'], stroke_width=FONT_ATTR['stroke_width'], font_family=FONT_ATTR['font_family'], font_size=15-5))
 
         return (svg, 1)
 
@@ -746,39 +846,60 @@ class Task:
                 if not (t.drawn_x_end_coord is None or t.drawn_y_coord is None or self.drawn_x_begin_coord is None):
                     # horizontal line
                     svg.add(svgwrite.shapes.Line(
-                            start=((t.drawn_x_end_coord - 2)*mm, (t.drawn_y_coord + 5)*mm),
-                            end=((self.drawn_x_begin_coord)*mm, (t.drawn_y_coord + 5)*mm),
+                            start=((t.drawn_x_end_coord - 2) *
+                                   mm, (t.drawn_y_coord + 5)*mm),
+                            end=((self.drawn_x_begin_coord) *
+                                 mm, (t.drawn_y_coord + 5)*mm),
                             stroke='black',
                             stroke_dasharray='5,3',
                             ))
 
-                    marker = svgwrite.container.Marker(insert=(5,5), size=(10,10))
-                    marker.add(svgwrite.shapes.Circle((5, 5), r=5, fill='#000000', opacity=0.5, stroke_width=0))
+                    marker = svgwrite.container.Marker(
+                        insert=(5, 5), size=(10, 10))
+                    marker.add(svgwrite.shapes.Circle(
+                        (5, 5), r=5, fill='#000000', opacity=0.5, stroke_width=0))
                     svg.add(marker)
                     # vertical line
                     eline = svgwrite.shapes.Line(
-                        start=((self.drawn_x_begin_coord)*mm, (t.drawn_y_coord + 5)*mm),
-                        end=((self.drawn_x_begin_coord)*mm, (self.drawn_y_coord + 5)*mm),
+                        start=((self.drawn_x_begin_coord) *
+                               mm, (t.drawn_y_coord + 5)*mm),
+                        end=((self.drawn_x_begin_coord)*mm,
+                             (self.drawn_y_coord + 5)*mm),
                         stroke='black',
                         stroke_dasharray='5,3',
-                        )
+                    )
                     eline['marker-end'] = marker.get_funciri()
                     svg.add(eline)
 
         return svg
 
+    @property
+    def desc(self):
+        """
+        Description of task
+        """
+        return 'Task #{:<3} : {:}\nResources : {:}\nDependencies : {:}\nStart date : {:}\nDuration : {:} days'.format(
+            self.id,
+            self.name,
+            ' '.join([res.name for res in self.resources]),
+            ' '.join(['#'+str(dep.id) for dep in self.dependencies]),
+            self.start_date,
+            self.duration,
+        )
+
     def __str__(self):
         """
         All dates and resources for task
         """
-        return '\tTask {} ({} resources, {} dependencies): {} days, {} through {}'.format(
+        return '\tTask #{:<3} : {:} ({} res, {} dep): {} days, {} through {}'.format(
+            self.id,
             self.name,
             len(self.resources),
             len(self.dependencies),
             self.duration,
             self.start_date,
             self.end_date,
-            )
+        )
 
 
 class SchedulingError(Exception):
@@ -790,8 +911,9 @@ class SchedulingError(Exception):
 
 class _my_svgwrite_drawing_wrapper(svgwrite.Drawing):
     """
-    Hack for beeing able to use a file descriptor as filename
+    Hack for being able to use a file descriptor as filename
     """
+
     def save(self, width='100%', height='100%'):
         """ Write the XML string to **filename**. """
         test = False
